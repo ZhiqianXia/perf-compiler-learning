@@ -1,0 +1,21 @@
+# 4. 性能剖析与优化
+
+- Profiling 体系
+  - PyTorch profiler：`torch.profiler.profile`, `torch.profiler.record_function`, `schedule`, `tensorboard_trace_handler`。
+  - `torch.utils.bottleneck`、`nvprof`、`nsys`、`Nsight Compute`。
+  - 统计指标：CPU时间、GPU时间、memory overhead、kernel launch counts。
+- 常见瓶颈定位
+  - 内存带宽 vs 计算密集：使用 `nvprof --analysis-metrics`。
+  - kernel launch瓶颈、小核效率(occupancy)和thread divergence。
+  - 数据加载：I/O, CPU预处理, 过早同步。
+- 代码优化实践
+  - 避免频繁 `to(device)` 和非contiguous tensor。
+  - 合并内核：`torch.nn.functional` 而非手写 Python 循环。
+  - 投影：推理算子融合、`torch.fx`/`torch.compile`。
+- 混合精度与量化
+  - `torch.cuda.amp.autocast`, `GradScaler`。
+  - FP16/BF16 训练/推理策略、loss scale 选择。
+  - 量化：静态量化、动态量化、QAT、INT8核与校准。
+- 性能测试
+  - 基准库：`torch.utils.benchmark`、`pytest-benchmark`。
+  - 重复试验、去掉冷启动、环境隔离。
