@@ -83,6 +83,33 @@
 |---|---|---|---|
 | `lab38_arch_workload_analysis.py` | Compiler-Driven Architecture Exploration: 算子频率 / AI 直方图 / Shape 分布 / SRAM sizing / 算力带宽 DSE / Fusion 收益 | 架构设计 | 输出架构参数建议书 |
 
+## 自动化方法轮
+
+| 脚本 | 功能 |
+|---|---|
+| `run_analysis.py` | **一键运行器**: 按芯片阶段编排 8 个 Analysis Pass，自动 JSON 报告 + 回归检测 + CI 模式 |
+| `model_registry.py` | **模型注册表**: 添加自定义模型，所有分析自动覆盖 |
+
+```bash
+# 全量分析
+python run_analysis.py
+
+# 按阶段
+python run_analysis.py --stage bringup
+python run_analysis.py --stage perf
+python run_analysis.py --stage arch
+
+# CI 模式 (失败返回非零退出码)
+python run_analysis.py --ci
+
+# 对比上次结果，检测回归
+python run_analysis.py --diff reports/report_20260412.json
+
+# 查看可用模型和 pass
+python run_analysis.py --list-models
+python run_analysis.py --list-passes
+```
+
 ## 运行方式
 
 ```bash
@@ -123,3 +150,216 @@ python3 -m pip install --user onnxscript
 用 `chrome://tracing` 或 [Perfetto UI](https://ui.perfetto.dev) 查看 trace 文件。
 lab10 使用 `tensorboard --logdir tb_logs --port 6006` 查看。
 lab18 快照可上传到 https://pytorch.org/memory_viz 查看。
+
+---
+
+## 完整使用手册
+
+### 一、环境准备
+
+```bash
+# 基础依赖 (PyTorch 2.0+)
+pip install torch torchvision
+
+# 可选依赖
+pip install torch-tb-profiler   # lab10 TensorBoard 可视化
+pip install onnx onnxscript     # lab11 ONNX 导出
+pip install triton              # lab33 Triton 检查 (PyTorch 通常自带)
+```
+
+确认环境:
+```bash
+cd profiler_labs
+python3 lab0_env_check.py
+```
+
+### 二、单个 Lab 逐步学习
+
+按编号顺序逐个运行，每个脚本独立可执行:
+
+```bash
+# 基础 profiling
+python3 lab1_basic_profile.py      # 算子耗时排序
+python3 lab3_gpu_profile.py        # GPU profiling (需要 CUDA)
+python3 lab4_memory_profile.py     # 内存分析
+python3 lab5_chrome_trace.py       # 导出 trace → chrome://tracing 查看
+
+# 性能对比
+python3 lab9_torch_compile.py      # eager vs compiled
+python3 lab13_benchmark_timer.py   # 微基准测试
+python3 lab14_flops_count.py       # FLOPs 统计
+
+# 混合精度 & 量化
+python3 lab26_amp_profile.py       # AMP profiling
+python3 lab27_dynamic_quantization.py  # INT8 量化对比
+```
+
+### 三、端到端编译链路分析
+
+按 `PyTorch → Triton → LLVM → Arch` 链路逐层深入:
+
+```bash
+# Step 1: compile 诊断 (graph break + 三模式对比 + 融合率)
+python3 lab32_compile_e2e.py
+
+# Step 2: 查看 Inductor 生成的 Triton kernel
+python3 lab33_triton_inspect.py
+# 更详细:
+TORCH_LOGS="output_code" python3 lab33_triton_inspect.py 2>&1 | head -200
+
+# Step 3: Roofline 分析 (compute-bound vs memory-bound)
+python3 lab34_roofline.py
+
+# Step 4: 架构级负载画像
+python3 lab38_arch_workload_analysis.py
+```
+
+查看编译器中间产物:
+```bash
+# Dynamo graph break 详情
+TORCH_LOGS="graph_breaks" python3 lab32_compile_e2e.py
+
+# AOTAutograd 前向/反向图
+TORCH_LOGS="aot" python3 lab32_compile_e2e.py
+
+# 完整编译日志
+TORCH_LOGS="dynamo,aot,inductor,output_code" python3 lab33_triton_inspect.py
+
+# Triton cache 中的 LLVM IR / PTX
+ls ~/.triton/cache/**/*.llir
+ls ~/.triton/cache/**/*.ptx
+```
+
+### 四、芯片研发阶段专用
+
+```bash
+# ── 架构设计 (RTL 开始之前) ──
+python3 lab38_arch_workload_analysis.py
+#   输出: 算子频率 / AI 分布 / Shape 分布 / SRAM sizing / DSE / Fusion 收益
+#   交付物: 架构参数建议书
+
+# ── 硅前验证 (Pre-silicon) ──
+python3 lab35_presilicon_extract.py
+#   输出: presilicon_golden/ 目录 (每个子模块的 input/output .pt)
+#   用途: 在硬件模拟器上跑 golden 对比
+
+# ── Bring-up (Day 0 硬件到手) ──
+python3 lab36_bringup_bisect.py
+#   输出: 逐子模块 PASS/FAIL 报告 + severity 分级
+#   若失败: 自动导出 repro_<module>.py 复现脚本
+
+# ── 生态兼容 (Month 2+) ──
+python3 lab37_backend_coverage.py
+#   输出: 覆盖率仪表板 + coverage_report.json
+#   追踪: op 通过率 / fusion pattern 支持情况
+```
+
+### 五、自动化运行器（推荐用于日常迭代）
+
+`run_analysis.py` 将所有分析 pass 编排为自动化 pipeline:
+
+```bash
+# ── 全量运行 (所有模型 × 所有 pass) ──
+python3 run_analysis.py
+
+# ── 按芯片阶段运行 ──
+python3 run_analysis.py --stage arch        # 架构设计: 算子频率 + AI分布 + fusion
+python3 run_analysis.py --stage presilicon  # 硅前: golden 提取
+python3 run_analysis.py --stage bringup     # Bring-up: 正确性 + graph break + bisect
+python3 run_analysis.py --stage perf        # 性能: speedup + roofline
+python3 run_analysis.py --stage ecosystem   # 生态: 正确性 + graph break + fusion
+
+# ── 指定模型 ──
+python3 run_analysis.py --models transformer_lm
+python3 run_analysis.py --models transformer_lm,vision_cnn
+
+# ── 查看可用模型和 pass ──
+python3 run_analysis.py --list-models
+python3 run_analysis.py --list-passes
+```
+
+**回归检测** — 跟上次结果自动 diff:
+```bash
+# 第一次运行，生成基线
+python3 run_analysis.py --stage perf
+#   → reports/report_20260413_100000.json
+
+# 修改编译器/硬件后再次运行
+python3 run_analysis.py --stage perf --diff reports/report_20260413_100000.json
+#   → 自动对比 speedup / correctness / kernel count
+#   → 回归 > 10% 自动标红
+```
+
+**CI/CD 集成** — 失败时返回非零退出码:
+```bash
+python3 run_analysis.py --stage bringup --ci
+# exit 0 = all pass
+# exit 1 = has failures or regressions
+```
+
+### 六、添加自定义模型
+
+编辑 `model_registry.py`，添加 `register_model()` 调用:
+
+```python
+# model_registry.py
+from run_analysis import register_model
+
+class MyLLM(nn.Module):
+    ...
+
+register_model(
+    "my_llm",                    # 唯一名
+    "transformer",                # 类别
+    lambda: MyLLM(),              # 模型工厂
+    lambda dev: torch.randint(0, 32000, (4, 512), device=dev),  # 输入工厂
+    "My custom LLM",             # 描述
+)
+```
+
+注册后所有分析自动覆盖，无需改其他文件:
+```bash
+python3 run_analysis.py --models my_llm --stage perf
+```
+
+### 七、分析 Pass 速查
+
+| Pass | 阶段 | 自动做什么 | 关键输出 |
+|------|------|-----------|---------|
+| `op_frequency` | arch | 算子频率 + shape 分布 | top10 热点 ops |
+| `fusion_benefit` | arch | eager vs compiled kernel 减少量 | kernel_reduction % |
+| `roofline` | perf | FLOPs + AI 分布 | throughput, ai_p50 |
+| `compile_speedup` | perf | 3 种 compile 模式耗时对比 | speedup × 3 |
+| `compile_correctness` | bringup | eager vs compiled 数值对比 | max_diff |
+| `graph_break` | bringup | Dynamo graph break 诊断 | break 数量 |
+| `bisect` | bringup | 逐子模块定位差异 | issues + severity |
+| `golden_extract` | presilicon | 保存子模块输入输出 | .pt files + manifest |
+
+### 八、可视化工具
+
+| 工具 | 用途 | 打开方式 |
+|------|------|---------|
+| Perfetto UI | 查看 Chrome Trace (`*_trace.json`) | https://ui.perfetto.dev |
+| TensorBoard | lab10 profiler 可视化 | `tensorboard --logdir tb_logs` |
+| PyTorch Memory Viz | lab18 显存快照 | https://pytorch.org/memory_viz |
+| Nsight Systems | GPU 时间线 | `nsys profile python3 lab8_full_template.py` |
+| Nsight Compute | Kernel 级 Roofline | `ncu --set roofline python3 lab34_roofline.py` |
+
+### 九、报告目录
+
+自动化运行产生的文件:
+
+```
+profiler_labs/
+├── reports/                              # run_analysis.py 自动生成
+│   ├── report_20260413_100000.json       # 每次运行的完整 JSON 报告
+│   └── golden/                           # presilicon stage 的 golden 数据
+│       └── transformer_lm/
+│           ├── manifest.json
+│           ├── root_input.pt
+│           └── root_output.pt
+├── coverage_report.json                  # lab37 的覆盖率报告
+├── inductor_traces/                      # lab33 的 Inductor trace
+├── *_trace.json                          # 各 lab 导出的 Chrome Trace
+└── tb_logs/                              # lab10 TensorBoard 日志
+```

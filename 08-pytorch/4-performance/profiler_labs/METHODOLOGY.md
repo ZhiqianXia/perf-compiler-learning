@@ -650,6 +650,22 @@ stages:
     - track fusion pattern support
 ```
 
+现在这些都可以通过 `run_analysis.py` **一行命令执行**:
+
+```bash
+# CI: 全量回归测试
+python run_analysis.py --ci
+
+# 只跑 bring-up 阶段
+python run_analysis.py --stage bringup --ci
+
+# 与上次结果对比，检测回归
+python run_analysis.py --diff reports/report_20260412_120000.json --ci
+
+# 指定模型子集
+python run_analysis.py --stage perf --models transformer_lm,vision_cnn
+```
+
 **度量看板汇总**:
 
 | 指标 | Pre-silicon | Bring-up | Perf Opt | Ecosystem |
@@ -673,3 +689,99 @@ stages:
 | `lab36_bringup_bisect.py` | Bring-up 自动 bisect 定位硬件 bug | L0-L4 | Bring-up |
 | `lab37_backend_coverage.py` | Triton backend op 覆盖率追踪 | L0-L2 | Ecosystem |
 | `lab38_arch_workload_analysis.py` | 架构设计负载画像: 算子/shape/AI/ISA/SRAM 分析 | L0-L3 | Architecture |
+
+---
+
+## 10. 自动化框架
+
+### 10.1 run_analysis.py — 一键运行器
+
+将 lab32-38 的分析能力拆解为可组合的 **Analysis Pass**，按芯片阶段编排执行。
+
+**架构**:
+
+```
+model_registry.py          run_analysis.py
+ (注册自定义模型)           (Pass 编排 + 报告)
+       │                        │
+       ▼                        ▼
+  Model Registry ───► Pipeline Engine ───► JSON Report
+                         │    │    │           │
+                 ┌───────┘    │    └───────┐   ▼
+                 ▼            ▼            ▼  Diff Engine
+          CompilePass   RooflinePass   BisectPass  (回归检测)
+```
+
+**内置 Analysis Passes**:
+
+| Pass | 功能 | 输出 metric |
+|------|------|------------|
+| `compile_correctness` | eager vs compiled 输出对比 | max_diff |
+| `graph_break` | Dynamo graph break 诊断 | break_mentions |
+| `compile_speedup` | 3 种 compile 模式的 speedup | default/reduce/autotune speedup |
+| `roofline` | FLOPs + AI 分布 | throughput_tflops, ai_p50 |
+| `op_frequency` | 算子频率与 shape 分布 | top10_ops, top_shapes |
+| `fusion_benefit` | eager vs compiled kernel 减少量 | kernel_reduction |
+| `golden_extract` | 子模块输入输出 golden 保存 | n_modules, golden_dir |
+| `bisect` | 逐子模块定位 eager/compiled 差异 | issues, severity |
+
+**按阶段自动选择 Pass**:
+
+| Stage | 对应 Passes |
+|-------|------------|
+| `arch` | op_frequency, fusion_benefit, roofline |
+| `presilicon` | golden_extract |
+| `bringup` | compile_correctness, graph_break, bisect |
+| `perf` | compile_speedup, roofline |
+| `ecosystem` | compile_correctness, graph_break, fusion_benefit |
+| `all` | 以上全部 |
+
+### 10.2 model_registry.py — 模型注册
+
+注册一次，所有分析自动覆盖:
+
+```python
+# model_registry.py
+from run_analysis import register_model
+
+register_model(
+    "my_llm",                    # 唯一名
+    "transformer",                # 类别
+    lambda: MyLLM(),              # 模型工厂
+    lambda dev: torch.randint(0, 32000, (4, 512), device=dev),  # 输入工厂
+    "My custom LLM (7B params)",  # 描述
+)
+```
+
+### 10.3 回归检测
+
+```bash
+# 第一次运行，生成基线
+python run_analysis.py --stage perf
+# → reports/report_20260413_100000.json
+
+# 修改硬件/编译器后，再次运行并 diff
+python run_analysis.py --stage perf --diff reports/report_20260413_100000.json
+# → 自动对比 speedup / correctness / kernel count 变化
+# → 回归 > 10% 自动标红
+```
+
+### 10.4 CI/CD 集成
+
+```yaml
+# .github/workflows/analysis.yml
+jobs:
+  analysis:
+    runs-on: [self-hosted, gpu]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run analysis
+        run: |
+          cd 08-pytorch/4-performance/profiler_labs
+          python run_analysis.py --stage bringup --ci
+      - name: Upload report
+        uses: actions/upload-artifact@v4
+        with:
+          name: analysis-report
+          path: 08-pytorch/4-performance/profiler_labs/reports/
+```
