@@ -59,6 +59,30 @@
 | `lab30_model_hooks.py` | forward/backward hook 调试 | `register_forward_hook()` |
 | `lab31_fx_graph.py` | torch.fx 符号追踪查看计算图 | `torch.fx.symbolic_trace()` |
 
+## Compiler × Profiler 端到端分析（lab32-34）
+
+| 脚本 | 内容 | 关键 API / 工具 |
+|---|---|---|
+| `lab32_compile_e2e.py` | 端到端 compile 诊断: graph break + 三模式 profile 对比 + 融合率 | `torch._dynamo.explain()`, `torch.compile(mode=...)` |
+| `lab33_triton_inspect.py` | 查看 Inductor 生成的 Triton kernel，分析 tile/warp 配置 | `TORCH_LOGS="output_code"`, Triton cache |
+| `lab34_roofline.py` | 基于 Profiler 数据构建 Roofline 分析，判断 compute/memory bound | `with_flops=True`, Roofline Model |
+
+> 方法论文档: [METHODOLOGY.md](METHODOLOGY.md) — 覆盖 PyTorch.compile → Triton → LLVM → Arch 全链路分析方法轮
+
+## 芯片研发全阶段落地（lab35-37）
+
+| 脚本 | 内容 | 芯片阶段 | 关键 API / 工具 |
+|---|---|---|---|
+| `lab35_presilicon_extract.py` | 硅前 Golden 提取: 收集子模块输入输出 + FX 算子图 + Inductor 生成代码 | Pre-silicon | `torch.fx`, `torch.export`, golden 对比 |
+| `lab36_bringup_bisect.py` | Bring-up 自动 bisect: 逐子模块定位 eager vs compiled 差异，生成复现脚本 | Day 0 | `torch.compile`, bisect, severity 分级 |
+| `lab37_backend_coverage.py` | Triton Backend Op 覆盖率: 模型动物园编译测试 + fusion pattern 检查 | Month 2+ | 覆盖率仪表板, JSON 报告 |
+
+## 架构设计负载画像（lab38）
+
+| 脚本 | 内容 | 芯片阶段 | 关键分析 |
+|---|---|---|---|
+| `lab38_arch_workload_analysis.py` | Compiler-Driven Architecture Exploration: 算子频率 / AI 直方图 / Shape 分布 / SRAM sizing / 算力带宽 DSE / Fusion 收益 | 架构设计 | 输出架构参数建议书 |
+
 ## 运行方式
 
 ```bash
